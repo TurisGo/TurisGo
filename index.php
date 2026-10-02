@@ -22,38 +22,61 @@ if (isset($_POST["accion"]) && $_POST["accion"] == "login") {
         require_once __DIR__ . "/DB/conexion.php";
         /** @var mysqli $conexion */
 
-        $stmt = mysqli_prepare($conexion, "SELECT id_cliente, nombre, `contraseña` AS clave FROM cliente WHERE email = ?");
-        mysqli_stmt_bind_param($stmt, "s", $email);
-        mysqli_stmt_execute($stmt);
-        $fila = mysqli_fetch_assoc(mysqli_stmt_get_result($stmt));
+        $cuentas = [
+            ["cliente", "SELECT id_cliente AS id, nombre, `contraseña` AS clave FROM cliente WHERE email = ?", "UPDATE cliente SET `contraseña` = ? WHERE id_cliente = ?"],
+            ["empleado", "SELECT id_empleado AS id, nombre, rol, `contraseña` AS clave FROM empleado WHERE email = ?", "UPDATE empleado SET `contraseña` = ? WHERE id_empleado = ?"],
+        ];
+        $cuenta = null;
 
-        $ok = false;
+        foreach ($cuentas as $c) {
+            $stmt = mysqli_prepare($conexion, $c[1]);
+            mysqli_stmt_bind_param($stmt, "s", $email);
+            mysqli_stmt_execute($stmt);
+            $fila = mysqli_fetch_assoc(mysqli_stmt_get_result($stmt));
 
-        if ($fila) {
-            if (password_verify($pass, $fila["clave"])) {
+            if (!$fila) {
+                continue;
+            }
+
+            $ok = password_verify($pass, $fila["clave"]);
+
+            if (!$ok && $pass == $fila["clave"]) {
                 $ok = true;
-            } elseif ($pass == $fila["clave"]) {
-                $ok = true;
+                $up = mysqli_prepare($conexion, $c[2]);
                 $hash = password_hash($pass, PASSWORD_DEFAULT);
-                $up = mysqli_prepare($conexion, "UPDATE cliente SET `contraseña` = ? WHERE id_cliente = ?");
-                mysqli_stmt_bind_param($up, "si", $hash, $fila["id_cliente"]);
+                mysqli_stmt_bind_param($up, "si", $hash, $fila["id"]);
                 mysqli_stmt_execute($up);
+            }
+
+            if ($ok) {
+                $cuenta = $fila;
+                $cuenta["rol"] = $c[0] == "cliente" ? "cliente" : $fila["rol"];
+                break;
             }
         }
 
-        if ($ok) {
+        if ($cuenta) {
             session_regenerate_id(true);
-            $_SESSION["usuario"] = $fila["nombre"];
-            $_SESSION["id_cliente"] = $fila["id_cliente"];
-            header("Location: index.php");
+            $_SESSION["usuario"] = $cuenta["nombre"];
+            $_SESSION["rol"] = $cuenta["rol"];
+            $_SESSION[$cuenta["rol"] == "cliente" ? "id_cliente" : "id_empleado"] = $cuenta["id"];
+            header("Location: " . ($cuenta["rol"] == "ventas" ? "ventas.php" : ($cuenta["rol"] == "jefe_ventas" ? "jefe_ventas.php" : "index.php")));
             exit;
-        } else {
-            $mensajeLogin = "Correo o contraseña incorrectos.";
         }
+
+        $mensajeLogin = "Correo o contraseña incorrectos.";
     }
 }
 
-require_once __DIR__ . "/datos.php";
+require_once __DIR__ . "/includes/datos.php";
+require_once __DIR__ . "/DB/conexion.php";
+/** @var mysqli $conexion */
+
+$nombrePorCodigo = [];
+foreach ($destinos as $d) {
+    $nombrePorCodigo[$d["cod"]] = $d["nombre"];
+}
+$listaProductos = mysqli_fetch_all(mysqli_query($conexion, "SELECT codigo, descripcion, tipo_producto, precio_unitario FROM producto ORDER BY codigo"), MYSQLI_ASSOC);
 ?>
 <!DOCTYPE html>
 <html lang="es" data-theme="light">
@@ -66,103 +89,57 @@ require_once __DIR__ . "/datos.php";
         content="TurisGo Viajes: paquetes nacionales e internacionales, vuelos, estadías y autos. Elegí tu destino y reservá tu próxima aventura.">
 
     <script>
-    var guardado = null;
-    try {
-        guardado = localStorage.getItem("tema");
-    } catch (e) {}
-    var sistema = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-    document.documentElement.dataset.theme = guardado || sistema;
+        var guardado = null;
+        try {
+            guardado = localStorage.getItem("tema");
+        } catch (e) {}
+        var sistema = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+        document.documentElement.dataset.theme = guardado || sistema;
     </script>
 
     <link rel="stylesheet" href="css/style.css?v=<?php echo filemtime(__DIR__ . "/css/style.css"); ?>">
     <link rel="preconnect" href="https://images.unsplash.com">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/7.0.1/css/all.min.css">
 
     <?php $heroLocal = file_exists("img/hero.jpg") && file_exists("img/hero-m.jpg"); ?>
     <?php if ($heroLocal) { ?>
-    <link rel="preload" as="image" href="img/hero.jpg" media="(min-width: 751px)" fetchpriority="high">
-    <link rel="preload" as="image" href="img/hero-m.jpg" media="(max-width: 750px)" fetchpriority="high">
-    <style>
-    .hero {
-        background-image: url("img/hero.jpg");
-    }
+        <link rel="preload" as="image" href="img/hero.jpg" media="(min-width: 751px)" fetchpriority="high">
+        <link rel="preload" as="image" href="img/hero-m.jpg" media="(max-width: 750px)" fetchpriority="high">
+        <style>
+            .hero {
+                background-image: url("img/hero.jpg");
+            }
 
-    @media (max-width: 750px) {
-        .hero {
-            background-image: url("img/hero-m.jpg");
-        }
-    }
-    </style>
+            @media (max-width: 750px) {
+                .hero {
+                    background-image: url("img/hero-m.jpg");
+                }
+            }
+        </style>
     <?php } else { ?>
-    <link rel="preload" as="image"
-        href="https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?auto=format&amp;fit=crop&amp;w=1400&amp;q=70"
-        media="(min-width: 751px)" fetchpriority="high">
-    <link rel="preload" as="image"
-        href="https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?auto=format&amp;fit=crop&amp;w=800&amp;q=70"
-        media="(max-width: 750px)" fetchpriority="high">
+        <link rel="preload" as="image"
+            href="https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?auto=format&amp;fit=crop&amp;w=1400&amp;q=70"
+            media="(min-width: 751px)" fetchpriority="high">
+        <link rel="preload" as="image"
+            href="https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?auto=format&amp;fit=crop&amp;w=800&amp;q=70"
+            media="(max-width: 750px)" fetchpriority="high">
     <?php } ?>
 
     <link rel="preload" as="style"
-        href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700;800&amp;family=Playfair+Display:wght@600;700&amp;display=swap"
+        href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700;800&amp;display=swap"
         onload="this.onload=null;this.rel='stylesheet'">
     <noscript>
         <link rel="stylesheet"
-            href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700;800&amp;family=Playfair+Display:wght@600;700&amp;display=swap">
+            href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700;800&amp;display=swap">
     </noscript>
 </head>
 
 <body>
 
-    <header class="header">
-        <div class="contenedor nav">
-
-            <button class="btn-menu" id="btnMenu" type="button" aria-label="Abrir menú" aria-expanded="false"
-                aria-controls="menuPrincipal">☰</button>
-
-            <a href="#inicio" class="logo">
-                <div class="logo-icono">✈</div>
-                <div class="logo-texto">
-                    <h2>TurisGo <span>Viajes</span></h2>
-                    <small>PORTAL TURÍSTICO</small>
-                </div>
-            </a>
-
-            <form class="buscador-header" id="formBuscadorHeader" action="index.php" method="get" role="search">
-                <span class="lupa">🔎</span>
-                <input type="search" id="buscarHeader" name="buscar" placeholder="Buscar destinos..."
-                    list="listaDestinos" autocomplete="off" aria-label="Buscar destinos">
-            </form>
-
-            <nav class="menu" id="menuPrincipal">
-                <a href="#inicio">Inicio</a>
-                <a href="#destinos">Destinos</a>
-                <a href="#ofertas">Ofertas</a>
-                <a href="#empresas">Empresas</a>
-                <a href="#contacto">Contacto</a>
-            </nav>
-
-            <div class="acciones">
-
-                <button class="carrito" id="btnTema" onclick="cambiarTema()">🌙</button>
-
-                <button class="carrito" onclick="abrirCarrito()">
-                    🛒 <span>Carrito</span>
-                    <b id="contadorCarrito">0</b>
-                </button>
-
-                <?php if (isset($_SESSION["usuario"])) { ?>
-                <div class="usuario-menu">
-                    <span>Hola, <?php echo htmlspecialchars($_SESSION["usuario"]); ?></span>
-                    <a href="?logout=1" class="btn-logout">Cerrar sesión</a>
-                </div>
-                <?php } else { ?>
-                <button class="btn-login" onclick="abrirLogin()">Iniciar sesión</button>
-                <?php } ?>
-
-            </div>
-        </div>
-    </header>
+    <?php $carritoDrawer = true;
+    require __DIR__ . "/includes/header_nav.php"; ?>
 
     <main id="inicio">
 
@@ -172,24 +149,16 @@ require_once __DIR__ . "/datos.php";
             <div class="contenedor hero-contenido">
 
                 <div class="hero-texto">
-                    <p class="mini-titulo">DESCUBRE EL MUNDO CON NOSOTROS</p>
-                    <h1>Tu próxima <span>aventura</span> comienza aquí</h1>
-                    <p class="descripcion">
-                        Paquetes nacionales e internacionales para individuos, familias y grupos.
-                        Vuelos, estadías, autos y paquetes integrales.
-                    </p>
+                    <h1>Paquetes, vuelos y estadías desde Caleta Olivia</h1>
+                    <p class="descripcion">Buscá por destino o código de aeropuerto, elegí la fecha y la cantidad de
+                        pasajeros.</p>
 
-                    <div class="datos">
-                        <div><strong>🌐</strong><span>80+ destinos</span></div>
-                        <div><strong>★</strong><span>15 años de experiencia</span></div>
-                        <div><strong>✈</strong><span>+50.000 viajeros</span></div>
-                    </div>
                 </div>
 
                 <div class="buscador">
 
                     <div class="campo">
-                        <label for="destino">DESTINO / AEROPUERTO</label>
+                        <label for="destino"><i class="fa-solid fa-location-dot"></i> DESTINO / AEROPUERTO</label>
                         <div class="campo-input">
                             <input type="text" id="destino" list="listaDestinos"
                                 placeholder="Ej: Bariloche, Madrid, EZE..." autocomplete="off" enterkeyhint="search">
@@ -198,27 +167,28 @@ require_once __DIR__ . "/datos.php";
                         </div>
                         <datalist id="listaDestinos">
                             <?php foreach ($aeropuertos as $a) { ?>
-                            <option value="<?php echo $a; ?>">
+                                <option value="<?php echo $a; ?>">
                                 <?php } ?>
                         </datalist>
                     </div>
 
                     <div class="campo">
-                        <label for="fecha">CHECK-IN</label>
+                        <label for="fecha"><i class="fa-regular fa-calendar"></i> CHECK-IN</label>
                         <input type="date" id="fecha">
                     </div>
 
                     <div class="campo">
-                        <label for="pasajeros">PASAJEROS</label>
+                        <label for="pasajeros"><i class="fa-solid fa-user-group"></i> PASAJEROS</label>
                         <select id="pasajeros">
                             <option value="1">1 pasajero</option>
                             <?php for ($i = 2; $i <= 6; $i++) { ?>
-                            <option value="<?php echo $i; ?>"><?php echo $i; ?> pasajeros</option>
+                                <option value="<?php echo $i; ?>"><?php echo $i; ?> pasajeros</option>
                             <?php } ?>
                         </select>
                     </div>
 
-                    <button class="btn-buscar" onclick="buscarDestino()">🔎 Buscar</button>
+                    <button class="btn-buscar" onclick="buscarDestino()"><i class="fa-solid fa-magnifying-glass"></i>
+                        Buscar</button>
 
                     <p class="buscador-aviso" id="avisoBuscador" hidden></p>
 
@@ -226,19 +196,11 @@ require_once __DIR__ . "/datos.php";
             </div>
         </section>
 
-        <section class="estadisticas">
-            <div class="estadistica"><strong>$680</strong><span>Precio desde</span></div>
-            <div class="estadistica"><strong>80+</strong><span>Destinos disponibles</span></div>
-            <div class="estadistica"><strong>24/7</strong><span>Soporte al viajero</span></div>
-            <div class="estadistica"><strong>100%</strong><span>Pagos seguros</span></div>
-        </section>
-
         <section class="destinos" id="destinos">
             <div class="contenedor">
 
                 <div class="destinos-header">
                     <div>
-                        <p class="seccion-titulo">NUESTROS DESTINOS</p>
                         <h2>Elegí tu destino ideal</h2>
                     </div>
 
@@ -251,10 +213,11 @@ require_once __DIR__ . "/datos.php";
 
                 <div class="filtros-servicio">
                     <button class="servicio activo" data-tipo="todos">Todos</button>
-                    <button class="servicio" data-tipo="integral">🌐 Integral</button>
-                    <button class="servicio" data-tipo="estadia">🏨 Estadía</button>
-                    <button class="servicio" data-tipo="vuelo">✈ Vuelo</button>
-                    <button class="servicio" data-tipo="auto">🚗 Auto</button>
+                    <button class="servicio" data-tipo="integral"><i class="fa-solid fa-earth-americas"></i>
+                        Integral</button>
+                    <button class="servicio" data-tipo="estadia"><i class="fa-solid fa-hotel"></i> Estadía</button>
+                    <button class="servicio" data-tipo="vuelo"><i class="fa-solid fa-plane"></i> Vuelo</button>
+                    <button class="servicio" data-tipo="auto"><i class="fa-solid fa-car"></i> Auto</button>
                 </div>
 
                 <div class="resultado-busqueda" id="resultadoBusqueda" hidden>
@@ -267,8 +230,8 @@ require_once __DIR__ . "/datos.php";
                     <p>Probá con alguno de estos:</p>
                     <div class="sugerencias">
                         <?php foreach ($destinos as $d) { ?>
-                        <button type="button"
-                            onclick="sugerirDestino('<?php echo $d["nombre"]; ?>')"><?php echo $d["nombre"]; ?></button>
+                            <button type="button"
+                                onclick="sugerirDestino('<?php echo $d["nombre"]; ?>')"><?php echo $d["nombre"]; ?></button>
                         <?php } ?>
                         <button type="button" class="todos" onclick="limpiarBusqueda()">Ver todos</button>
                     </div>
@@ -276,76 +239,121 @@ require_once __DIR__ . "/datos.php";
 
                 <div class="tarjetas">
                     <?php foreach ($destinos as $d) { ?>
-                    <article class="tarjeta" data-region="<?php echo $d["region"]; ?>"
-                        data-tipo="<?php echo $d["tipo"]; ?>" data-destino="<?php echo $d["busca"]; ?>">
+                        <article class="tarjeta" data-region="<?php echo $d["region"]; ?>"
+                            data-tipo="<?php echo $d["tipo"]; ?>" data-destino="<?php echo $d["busca"]; ?>">
 
-                        <div class="imagen-tarjeta">
-                            <?php $archivo = "img/" . $d["img"] . ".jpg"; ?>
-                            <?php if (file_exists($archivo)) { ?>
-                            <img src="<?php echo $archivo; ?>" width="720" height="492" loading="lazy" decoding="async"
-                                alt="<?php echo $d["nombre"]; ?>">
-                            <?php } else { ?>
-                            <?php $base = "https://images.unsplash.com/" . $d["img"] . "?auto=format&amp;fit=crop&amp;q=70"; ?>
-                            <img src="<?php echo $base; ?>&amp;w=600&amp;h=410"
-                                srcset="<?php echo $base; ?>&amp;w=400&amp;h=273 400w, <?php echo $base; ?>&amp;w=600&amp;h=410 600w, <?php echo $base; ?>&amp;w=720&amp;h=492 720w"
-                                sizes="(max-width: 750px) 90vw, (max-width: 1000px) 45vw, 400px" width="600"
-                                height="410" loading="lazy" decoding="async" alt="<?php echo $d["nombre"]; ?>">
-                            <?php } ?>
-                            <?php if ($d["etiqueta"] != "") { ?>
-                            <span class="etiqueta"><?php echo $d["etiqueta"]; ?></span>
-                            <?php } ?>
-                            <span class="tipo"><?php echo $tiposTxt[$d["tipo"]]; ?></span>
-                        </div>
-
-                        <div class="contenido-tarjeta">
-                            <span class="ubicacion"><?php echo $d["pais"]; ?> · <?php echo $d["cod"]; ?></span>
-                            <h3><?php echo $d["nombre"]; ?></h3>
-                            <p><?php echo $d["desc"]; ?></p>
-
-                            <div class="info-tarjeta">
-                                <span><?php echo $d["dias"]; ?> días</span>
-                                <strong>Desde $<?php echo number_format($d["precio"], 0, ",", "."); ?></strong>
+                            <div class="imagen-tarjeta">
+                                <?php $archivo = "img/" . $d["img"] . ".jpg"; ?>
+                                <?php if (file_exists($archivo)) { ?>
+                                    <img src="<?php echo $archivo; ?>" width="720" height="492" loading="lazy" decoding="async"
+                                        alt="<?php echo $d["nombre"]; ?>">
+                                <?php } else { ?>
+                                    <?php $base = "https://images.unsplash.com/" . $d["img"] . "?auto=format&amp;fit=crop&amp;q=70"; ?>
+                                    <img src="<?php echo $base; ?>&amp;w=600&amp;h=410"
+                                        srcset="<?php echo $base; ?>&amp;w=400&amp;h=273 400w, <?php echo $base; ?>&amp;w=600&amp;h=410 600w, <?php echo $base; ?>&amp;w=720&amp;h=492 720w"
+                                        sizes="(max-width: 750px) 90vw, (max-width: 1000px) 45vw, 400px" width="600"
+                                        height="410" loading="lazy" decoding="async" alt="<?php echo $d["nombre"]; ?>">
+                                <?php } ?>
+                                <?php if ($d["etiqueta"] != "") { ?>
+                                    <span class="etiqueta"><?php echo $d["etiqueta"]; ?></span>
+                                <?php } ?>
+                                <span class="tipo"><?php echo $tiposTxt[$d["tipo"]]; ?></span>
                             </div>
 
-                            <button class="btn-ver"
-                                onclick="agregarCarrito('<?php echo $d["nombre"]; ?>', <?php echo $d["precio"]; ?>)">
-                                Agregar al carrito
-                            </button>
-                        </div>
+                            <div class="contenido-tarjeta">
+                                <span class="ubicacion"><i class="fa-solid fa-location-dot"></i> <?php echo $d["pais"]; ?> ·
+                                    <?php echo $d["cod"]; ?></span>
+                                <h3><?php echo $d["nombre"]; ?></h3>
+                                <p><?php echo $d["desc"]; ?></p>
 
-                    </article>
+                                <div class="info-tarjeta">
+                                    <span><i class="fa-regular fa-clock"></i> <?php echo $d["dias"]; ?> días</span>
+                                    <strong>Desde $<?php echo number_format($d["precio"], 0, ",", "."); ?></strong>
+                                </div>
+
+                                <button class="btn-ver"
+                                    onclick="agregarCarrito('<?php echo $d["nombre"]; ?>', <?php echo $d["precio"]; ?>, '<?php echo $d["cod"]; ?>')">
+                                    Agregar al carrito
+                                </button>
+                            </div>
+
+                        </article>
                     <?php } ?>
                 </div>
 
             </div>
         </section>
 
-        <section class="ofertas" id="ofertas">
+        <section class="lista-productos" id="productos">
             <div class="contenedor">
-                <p class="seccion-titulo">OFERTAS ESPECIALES</p>
-                <h2>Viajá más, pagá menos</h2>
-                <p>Encontrá promociones y descuentos para tus próximas vacaciones.</p>
-                <button class="btn-ofertas">Ver ofertas</button>
+                <h2 class="titulo-lista">Precios y códigos</h2>
+
+                <div class="tabla-carrito-caja">
+                    <table class="tabla-carrito">
+                        <thead>
+                            <tr>
+                                <th>Código</th>
+                                <th>Descripción</th>
+                                <th>Tipo</th>
+                                <th>Precio</th>
+                                <th>Acción</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach ($listaProductos as $prod) { ?>
+                                <?php $nombreCarrito = $nombrePorCodigo[$prod["codigo"]] ?? $prod["codigo"]; ?>
+                                <tr>
+                                    <td data-label="Código"><?php echo htmlspecialchars($prod["codigo"]); ?></td>
+                                    <td data-label="Descripción" class="izq">
+                                        <?php echo htmlspecialchars($prod["descripcion"]); ?></td>
+                                    <td data-label="Tipo">
+                                        <?php echo htmlspecialchars(str_replace("_", " ", $prod["tipo_producto"])); ?></td>
+                                    <td data-label="Precio">
+                                        $<?php echo number_format($prod["precio_unitario"], 0, ",", "."); ?></td>
+                                    <td>
+                                        <button type="button" class="btn-ver btn-chico"
+                                            onclick="agregarCarrito(<?php echo htmlspecialchars(json_encode($nombreCarrito), ENT_QUOTES); ?>, <?php echo (float) $prod["precio_unitario"]; ?>)">
+                                            <i class="fa-solid fa-cart-plus"></i> Agregar
+                                        </button>
+                                    </td>
+                                </tr>
+                            <?php } ?>
+                        </tbody>
+                    </table>
+                </div>
             </div>
         </section>
 
-        <section class="empresas" id="empresas">
+        <section class="beneficios" id="nosotros">
             <div class="contenedor">
-                <div>
-                    <p class="seccion-titulo">PARA EMPRESAS</p>
-                    <h2>Soluciones para viajes corporativos</h2>
-                    <p>
-                        Organizamos viajes empresariales, reservas, vuelos y alojamiento
-                        para equipos de trabajo.
-                    </p>
+
+                <div class="beneficios-lista">
+                    <div class="beneficio"><i class="fa-solid fa-suitcase-rolling"></i>
+                        <h3>Todo en un solo lugar</h3>
+                        <p>Vuelos, estadías, autos y paquetes integrales sin tener que armar el viaje por separado.</p>
+                    </div>
+                    <div class="beneficio"><i class="fa-solid fa-headset"></i>
+                        <h3>Atención personalizada</h3>
+                        <p>Un asesor real responde tus dudas antes, durante y después del viaje.</p>
+                    </div>
+                    <div class="beneficio"><i class="fa-solid fa-shield-halved"></i>
+                        <h3>Reservas seguras</h3>
+                        <p>Tus datos y tus pagos están protegidos en cada paso de la reserva.</p>
+                    </div>
                 </div>
-                <button class="btn-empresa">Más información</button>
+            </div>
+        </section>
+
+        <section class="ofertas" id="reservar">
+            <div class="contenedor">
+                <h2>Armá tu pedido y seguilo desde tu cuenta</h2>
+                <p>Elegí los productos, revisá el carrito y consultá el estado de tu pedido en "Mis pedidos".</p>
+                <a href="#productos" class="btn-ofertas">Ver lista de productos</a>
             </div>
         </section>
 
         <section class="contacto" id="contacto">
             <div class="contenedor">
-                <p class="seccion-titulo">CONTACTO</p>
                 <h2>¿Necesitás ayuda?</h2>
                 <p>Nuestro equipo está disponible para ayudarte a planificar tu viaje.</p>
                 <button class="btn-contacto" onclick="contactar()">Contactanos</button>
@@ -359,26 +367,32 @@ require_once __DIR__ . "/datos.php";
 
             <div>
                 <h3>TurisGo <span>Viajes</span></h3>
-                <p>Tu próxima aventura comienza aquí.</p>
+                <p>Viajes nacionales e internacionales desde la Patagonia.</p>
+                <div class="redes">
+                    <a href="#" aria-label="Instagram"><i class="fa-brands fa-instagram"></i></a>
+                    <a href="#" aria-label="Facebook"><i class="fa-brands fa-facebook-f"></i></a>
+                    <a href="#" aria-label="WhatsApp"><i class="fa-brands fa-whatsapp"></i></a>
+                </div>
             </div>
 
             <div>
                 <h4>Navegación</h4>
                 <a href="#inicio">Inicio</a>
                 <a href="#destinos">Destinos</a>
-                <a href="#ofertas">Ofertas</a>
             </div>
 
             <div>
                 <h4>Contacto</h4>
-                <p>Caleta Olivia, Santa Cruz</p>
-                <p>contacto@turisgo.com</p>
+                <p><i class="fa-solid fa-location-dot"></i>Caleta Olivia, Santa Cruz</p>
+                <p><i class="fa-regular fa-envelope"></i>contacto@turisgo.com</p>
             </div>
 
         </div>
 
         <div class="copyright">© 2026 TurisGo. Todos los derechos reservados.</div>
     </footer>
+
+    <div class="aviso-carrito" id="avisoCarrito" role="status" aria-live="polite"></div>
 
     <div class="modal" id="modalLogin">
         <div class="modal-contenido login-contenido">
@@ -389,7 +403,7 @@ require_once __DIR__ . "/datos.php";
             <p>Ingresá a tu cuenta de TurisGo.</p>
 
             <?php if ($mensajeLogin != "") { ?>
-            <div class="error-login"><?php echo htmlspecialchars($mensajeLogin); ?></div>
+                <div class="error-login"><?php echo htmlspecialchars($mensajeLogin); ?></div>
             <?php } ?>
 
             <form method="POST" action="index.php">
@@ -409,11 +423,6 @@ require_once __DIR__ . "/datos.php";
                 ¿No tenés cuenta? <a href="registro.php">Registrate acá</a>
             </div>
 
-            <div class="datos-demo">
-                <strong>Cuenta de prueba</strong>
-                <span>Correo: demo@turisgo.com</span>
-                <span>Contraseña: 1234</span>
-            </div>
 
         </div>
     </div>
@@ -441,40 +450,41 @@ require_once __DIR__ . "/datos.php";
 
     <?php if ($mensajeLogin != "") { ?>
 
-    <script>
-    document.getElementById("modalLogin").classList.add("mostrar");
-    </script>
+        <script>
+            document.getElementById("modalLogin").classList.add("mostrar");
+        </script>
     <?php } ?>
 
     <script>
-    function cambiarTema() {
-        var root = document.documentElement;
-        if (root.dataset.theme == "dark") {
-            root.dataset.theme = "light";
-        } else {
-            root.dataset.theme = "dark";
+        function cambiarTema() {
+            var root = document.documentElement;
+            if (root.dataset.theme == "dark") {
+                root.dataset.theme = "light";
+            } else {
+                root.dataset.theme = "dark";
+            }
+            try {
+                localStorage.setItem("tema", root.dataset.theme);
+            } catch (e) {}
+            iconoTema();
         }
-        try {
-            localStorage.setItem("tema", root.dataset.theme);
-        } catch (e) {}
+
+        function iconoTema() {
+            var btn = document.getElementById("btnTema");
+            btn.innerHTML = document.documentElement.dataset.theme == "dark" ? '<i class="fa-solid fa-sun"></i>' :
+                '<i class="fa-solid fa-moon"></i>';
+        }
+
         iconoTema();
-    }
-
-    function iconoTema() {
-        var btn = document.getElementById("btnTema");
-        btn.textContent = document.documentElement.dataset.theme == "dark" ? "☀️" : "🌙";
-    }
-
-    iconoTema();
     </script>
 
-    <script src="js/script.js"></script>
-    <script src="js/header.js"></script>
+    <script src="js/script.js?v=<?php echo filemtime(__DIR__ . "/js/script.js"); ?>"></script>
+    <script src="js/header.js?v=<?php echo filemtime(__DIR__ . "/js/header.js"); ?>"></script>
 
     <script>
-    if (location.search.indexOf("login=1") !== -1) {
-        abrirLogin();
-    }
+        if (location.search.indexOf("login=1") !== -1) {
+            abrirLogin();
+        }
     </script>
 
 </body>
